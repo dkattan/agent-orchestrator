@@ -2442,6 +2442,7 @@ func (c *Controller) drainLockedWithLimit(ctx context.Context, allowDispatch boo
 func (c *Controller) ArmHandoff(
 	ctx context.Context,
 	policy domain.SessionInterfaceTransitionPolicy,
+	keepHeldQueue bool,
 ) error {
 	if !policy.Valid() {
 		return fmt.Errorf("invalid interface handoff policy %q", policy)
@@ -2455,16 +2456,12 @@ func (c *Controller) ArmHandoff(
 	}
 
 	c.mu.Lock()
-	if c.handoff == want {
-		c.mu.Unlock()
-		return nil
-	}
-	if c.handoff != controllerHandoffNone {
-		c.mu.Unlock()
+	defer c.mu.Unlock()
+	if c.handoff != want && c.handoff != controllerHandoffNone {
 		return ErrControllerHandoff
 	}
 	c.handoff = want
-	c.mu.Unlock()
+	c.holdQueueForMove = c.holdQueueForMove || keepHeldQueue
 	return nil
 }
 
@@ -2477,7 +2474,7 @@ func (c *Controller) BeginHandoff(
 	policy domain.SessionInterfaceTransitionPolicy,
 	keepHeldQueue bool,
 ) error {
-	if err := c.ArmHandoff(ctx, policy); err != nil {
+	if err := c.ArmHandoff(ctx, policy, keepHeldQueue); err != nil {
 		return err
 	}
 
@@ -2509,7 +2506,7 @@ func (c *Controller) BeginHandoff(
 
 	c.mu.Lock()
 	active := c.pendingTurnID != ""
-	c.holdQueueForMove = keepHeldQueue
+	keepHeldQueue = c.holdQueueForMove
 	c.mu.Unlock()
 	if !active && !keepHeldQueue {
 		// A queued row can exist in the narrow gap after a completion was
