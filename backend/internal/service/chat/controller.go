@@ -2534,13 +2534,22 @@ func (c *Controller) BeginHandoff(
 		c.mu.Lock()
 		busy := c.pendingTurnID != ""
 		held = keepHeldQueue && c.queueHeld && !busy
-		c.keepQueueOnStop = held
 		c.mu.Unlock()
 		if held {
-			c.sendMu.Unlock()
-			return nil
-		}
-		if !busy {
+			idle, err := c.onlyQueueLeft(ctx)
+			if err != nil {
+				c.sendMu.Unlock()
+				c.abortHandoff(keepHeldQueue)
+				return fmt.Errorf("check held work before handoff: %w", err)
+			}
+			if idle {
+				c.mu.Lock()
+				c.keepQueueOnStop = true
+				c.mu.Unlock()
+				c.sendMu.Unlock()
+				return nil
+			}
+		} else if !busy {
 			_, err := c.store.NextQueuedTurn(ctx, c.conversation.ID)
 			switch {
 			case errors.Is(err, domain.ErrNoQueuedTurn):
@@ -2561,7 +2570,7 @@ func (c *Controller) BeginHandoff(
 		c.sendMu.Unlock()
 		select {
 		case <-ctx.Done():
-			c.AbortHandoff()
+			c.abortHandoff(keepHeldQueue)
 			return ctx.Err()
 		case <-c.stopped:
 			return nil
@@ -2677,10 +2686,12 @@ func lockWithin(ctx context.Context, mu *sync.Mutex, limit time.Duration) bool {
 
 // AbortHandoff reopens source intake when a drain is cancelled before the source
 // controller is stopped. Any queued work resumes through the ordinary drain.
-func (c *Controller) AbortHandoff() {
+func (c *Controller) AbortHandoff() { c.abortHandoff(false) }
+
+func (c *Controller) abortHandoff(keepHeldQueue bool) {
 	c.mu.Lock()
-	resumeDispatch := c.handoff == controllerHandoffInterfaceDrain ||
-		c.handoff == controllerHandoffInterfaceInterrupt
+	resumeDispatch := (c.handoff == controllerHandoffInterfaceDrain ||
+		c.handoff == controllerHandoffInterfaceInterrupt) && !(keepHeldQueue && c.queueHeld)
 	branchHandoffDone := c.branchHandoffDone
 	c.branchHandoffDone = nil
 	c.handoff = controllerHandoffNone
@@ -3470,6 +3481,15 @@ func (c *Controller) projectUnit(
 		c.sendMu.Unlock()
 	}
 	return true
+}
+
+func (c *Controller) onlyQueueLeft(ctx context.Context) (bool, error) {
+	running, err := c.store.ListVisibleRunningTurnProviderIDs(ctx, c.conversation.ID)
+	if err != nil || len(running) != 0 {
+		return false, err
+	}
+	pending, err := c.store.HasPendingConversationInteractions(ctx, c.conversation.ID)
+	return !pending, err
 }
 
 func (c *Controller) cleanupOwnedControllerWork(ctx context.Context, now time.Time) error {
