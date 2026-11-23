@@ -4749,7 +4749,7 @@ func TestChatHandoffDrainWaitsForRootAfterNestedTurnCompletes(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionDrain)
+		done <- h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionDrain, false)
 	}()
 
 	h.conv.emit(
@@ -4876,7 +4876,7 @@ func TestChatHandoffDrainFinishesAcceptedQueueAndClosesNewIntake(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionDrain)
+		done <- h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionDrain, false)
 	}()
 	// Completion of the first accepted turn must dispatch the accepted queue,
 	// rather than declaring the source quiescent early.
@@ -4959,7 +4959,7 @@ func TestChatHandoffInterruptArmBlocksCompletionFromPromotingQueue(t *testing.T)
 
 	// Target preflight has now succeeded. Preparation makes the fence durable
 	// before touching the provider and remains independent of clock movement.
-	if err := h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt); err != nil {
+	if err := h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt, false); err != nil {
 		t.Fatalf("prepare armed handoff: %v", err)
 	}
 	if err := h.svc.Stop(ctx, testSession); err != nil {
@@ -5059,7 +5059,7 @@ func TestChatHandoffInterruptCompletionDuringProviderCancellationCannotPromoteQu
 		t.Fatalf("queue second turn: %v", err)
 	}
 
-	if err := h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt); err != nil {
+	if err := h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt, false); err != nil {
 		t.Fatalf("prepare interrupt handoff: %v", err)
 	}
 	if err := h.svc.Stop(ctx, testSession); err != nil {
@@ -5091,7 +5091,7 @@ func TestChatHandoffInterruptDoesNotWaitForTurnCompletion(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt)
+		done <- h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt, false)
 	}()
 	select {
 	case err := <-done:
@@ -5189,7 +5189,7 @@ func TestChatHandoffInterruptDoesNotReachProviderUntilQueueCancellationSucceeds(
 	if got := flakyStore.callCount(); got != 0 {
 		t.Fatalf("queue cancellation calls during reversible arm = %d, want 0", got)
 	}
-	if err := h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt); err == nil {
+	if err := h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt, false); err == nil {
 		t.Fatal("first handoff preparation error = nil, want injected queue cancellation failure")
 	}
 	if got := provider.attemptCount(); got != 0 {
@@ -5202,7 +5202,7 @@ func TestChatHandoffInterruptDoesNotReachProviderUntilQueueCancellationSucceeds(
 	if err := h.svc.ArmChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt, false); err != nil {
 		t.Fatalf("re-arm handoff after preparation failure: %v", err)
 	}
-	if err := h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt); err != nil {
+	if err := h.svc.PrepareChatHandoff(ctx, testSession, domain.SessionInterfaceTransitionInterrupt, false); err != nil {
 		t.Fatalf("prepare armed interrupt handoff: %v", err)
 	}
 	if got := flakyStore.callCount(); got != 2 {
@@ -5222,7 +5222,7 @@ func TestChatHandoffInterruptDoesNotReachProviderUntilQueueCancellationSucceeds(
 func TestChatHandoffTreatsMissingControllerAsAlreadyQuiescent(t *testing.T) {
 	svc := chatsvc.New(chatsvc.Options{})
 	if err := svc.PrepareChatHandoff(
-		context.Background(), "missing-controller", domain.SessionInterfaceTransitionDrain,
+		context.Background(), "missing-controller", domain.SessionInterfaceTransitionDrain, false,
 	); err != nil {
 		t.Fatalf("prepare missing controller: %v", err)
 	}
