@@ -2455,6 +2455,12 @@ func (c *Controller) ArmHandoff(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	c.mu.Lock()
+	armed := c.handoff == want
+	c.mu.Unlock()
+	if armed {
+		return nil
+	}
 	moving, err := c.accountMoveActive(ctx)
 	if err != nil {
 		return fmt.Errorf("check account move before handoff: %w", err)
@@ -2499,14 +2505,12 @@ func (c *Controller) BeginHandoff(
 		active := c.pendingTurnID != ""
 		c.mu.Unlock()
 		_, err := c.store.CancelAllQueuedTurns(ctx, c.conversation.ID, c.now())
-		if err == nil {
-			err = releaseHeldQueue(ctx, c.store, c.conversation.ID)
-		}
 		c.sendMu.Unlock()
 		if err != nil {
 			c.AbortHandoff()
 			return fmt.Errorf("prepare interrupt handoff: cancel queued turns: %w", err)
 		}
+		c.releaseHeldQueueForHandoff(ctx)
 		if active {
 			if err := c.interruptForHandoff(ctx); err != nil {
 				c.AbortHandoff()
@@ -2547,14 +2551,9 @@ func (c *Controller) BeginHandoff(
 			_, err := c.store.NextQueuedTurn(ctx, c.conversation.ID)
 			switch {
 			case errors.Is(err, domain.ErrNoQueuedTurn):
-				var releaseErr error
-				if !keepHeld {
-					releaseErr = releaseHeldQueue(ctx, c.store, c.conversation.ID)
-				}
 				c.sendMu.Unlock()
-				if releaseErr != nil {
-					c.AbortHandoff()
-					return fmt.Errorf("release held queue before handoff: %w", releaseErr)
+				if !keepHeld {
+					c.releaseHeldQueueForHandoff(ctx)
 				}
 				return nil
 			case err != nil:
@@ -2586,6 +2585,9 @@ func (c *Controller) BeginHandoff(
 			c.AbortHandoff()
 			return ctx.Err()
 		case <-c.stopped:
+			if !keepHeld {
+				c.releaseHeldQueueForHandoff(ctx)
+			}
 			return nil
 		case <-ticker.C:
 		}
